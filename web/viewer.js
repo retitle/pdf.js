@@ -44,6 +44,7 @@ if (typeof PDFJSDev !== 'undefined' && PDFJSDev.test('FIREFOX || MOZCENTRAL')) {
   require('./firefoxcom.js');
   require('./firefox_print_service.js');
 }
+
 if (typeof PDFJSDev !== 'undefined' && PDFJSDev.test('GENERIC')) {
   require('./genericcom.js');
 }
@@ -175,9 +176,9 @@ function webViewerLoad() {
   let config = getViewerConfiguration();
   if (typeof PDFJSDev === 'undefined' || !PDFJSDev.test('PRODUCTION')) {
     Promise.all([
-      SystemJS.import('pdfjs-web/app'),
-      SystemJS.import('pdfjs-web/genericcom'),
-      SystemJS.import('pdfjs-web/pdf_print_service'),
+      SystemJS.import('pdfjs-web/app.js'),
+      SystemJS.import('pdfjs-web/genericcom.js'),
+      SystemJS.import('pdfjs-web/pdf_print_service.js'),
     ]).then(function([app, ...otherModules]) {
       window.PDFViewerApplication = app.PDFViewerApplication;
       app.PDFViewerApplication.run(config);

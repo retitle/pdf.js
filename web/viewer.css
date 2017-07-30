@@ -30,8 +30,7 @@ html {
 body {
   height: 100%;
   width: 100%;
-  background-color: #404040;
-  background-image: url(images/texture.png);
+  background-color: #f4f4f4;
 }
 
 body,
@@ -47,6 +46,11 @@ select {
 }
 [hidden] {
   display: none !important;
+}
+
+.re-hidden {
+  display: none !important;
+  visibility: hidden;
 }
 
 #viewerContainer.pdfPresentationMode:-webkit-full-screen {
@@ -1951,4 +1955,11 @@ html[dir='rtl'] #documentPropertiesOverlay .row > * {
   #scaleSelectContainer {
     display: none;
   }
+}
+
+/** Retitle Overrides **/
+#toolbarContainer {
+  background: #1c345d !important;
+  box-shadow: none !important;
+  border: 0 !important;
 }
