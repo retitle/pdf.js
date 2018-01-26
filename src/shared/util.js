@@ -14,13 +14,7 @@
  */
 
 import './compatibility';
-import { ReadableStream } from '../../external/streams/streams-lib';
-
-var globalScope =
-  (typeof window !== 'undefined' && window.Math === Math) ? window :
-  // eslint-disable-next-line no-undef
-  (typeof global !== 'undefined' && global.Math === Math) ? global :
-  (typeof self !== 'undefined' && self.Math === Math) ? self : this;
+import { ReadableStream } from './streams_polyfill';
 
 var FONT_IDENTITY_MATRIX = [0.001, 0, 0, 0.001, 0, 0];
 
@@ -500,6 +494,21 @@ let FormatError = (function FormatErrorClosure() {
   return FormatError;
 })();
 
+/**
+ * Error used to indicate task cancellation.
+ */
+let AbortException = (function AbortExceptionClosure() {
+  function AbortException(msg) {
+    this.name = 'AbortException';
+    this.message = msg;
+  }
+
+  AbortException.prototype = new Error();
+  AbortException.constructor = AbortException;
+
+  return AbortException;
+})();
+
 var NullCharactersRegExp = /\x00/g;
 
 function removeNullCharacters(str) {
@@ -591,13 +600,14 @@ function string32(value) {
                              (value >> 8) & 0xff, value & 0xff);
 }
 
+// Calculate the base 2 logarithm of the number `x`. This differs from the
+// native function in the sense that it returns the ceiling value and that it
+// returns 0 instead of `Infinity`/`NaN` for `x` values smaller than/equal to 0.
 function log2(x) {
-  var n = 1, i = 0;
-  while (x > n) {
-    n <<= 1;
-    i++;
+  if (x <= 0) {
+    return 0;
   }
-  return i;
+  return Math.ceil(Math.log2(x));
 }
 
 function readInt8(data, start) {
@@ -791,10 +801,6 @@ var Util = (function UtilClosure() {
     return result;
   };
 
-  Util.sign = function Util_sign(num) {
-    return num < 0 ? -1 : 1;
-  };
-
   var ROMAN_NUMBER_MAP = [
     '', 'C', 'CC', 'CCC', 'CD', 'D', 'DC', 'DCC', 'DCCC', 'CM',
     '', 'X', 'XX', 'XXX', 'XL', 'L', 'LX', 'LXX', 'LXXX', 'XC',
@@ -808,7 +814,7 @@ var Util = (function UtilClosure() {
    * @return {string} The resulting Roman number.
    */
   Util.toRoman = function Util_toRoman(number, lowerCase) {
-    assert(isInt(number) && number > 0,
+    assert(Number.isInteger(number) && number > 0,
            'The number should be a positive integer.');
     var pos, romanBuf = [];
     // Thousands
@@ -1066,20 +1072,12 @@ function isBool(v) {
   return typeof v === 'boolean';
 }
 
-function isInt(v) {
-  return typeof v === 'number' && ((v | 0) === v);
-}
-
 function isNum(v) {
   return typeof v === 'number';
 }
 
 function isString(v) {
   return typeof v === 'string';
-}
-
-function isArray(v) {
-  return v instanceof Array;
 }
 
 function isArrayBuffer(v) {
@@ -1089,11 +1087,6 @@ function isArrayBuffer(v) {
 // Checks if ch is one of the following characters: SPACE, TAB, CR or LF.
 function isSpace(ch) {
   return (ch === 0x20 || ch === 0x09 || ch === 0x0D || ch === 0x0A);
-}
-
-function isNodeJS() {
-  // eslint-disable-next-line no-undef
-  return typeof process === 'object' && process + '' === '[object process]';
 }
 
 /**
@@ -1120,66 +1113,6 @@ function createPromiseCapability() {
   });
   return capability;
 }
-
-var StatTimer = (function StatTimerClosure() {
-  function rpad(str, pad, length) {
-    while (str.length < length) {
-      str += pad;
-    }
-    return str;
-  }
-  function StatTimer() {
-    this.started = Object.create(null);
-    this.times = [];
-    this.enabled = true;
-  }
-  StatTimer.prototype = {
-    time: function StatTimer_time(name) {
-      if (!this.enabled) {
-        return;
-      }
-      if (name in this.started) {
-        warn('Timer is already running for ' + name);
-      }
-      this.started[name] = Date.now();
-    },
-    timeEnd: function StatTimer_timeEnd(name) {
-      if (!this.enabled) {
-        return;
-      }
-      if (!(name in this.started)) {
-        warn('Timer has not been started for ' + name);
-      }
-      this.times.push({
-        'name': name,
-        'start': this.started[name],
-        'end': Date.now(),
-      });
-      // Remove timer from started so it can be called again.
-      delete this.started[name];
-    },
-    toString: function StatTimer_toString() {
-      var i, ii;
-      var times = this.times;
-      var out = '';
-      // Find the longest name for padding purposes.
-      var longest = 0;
-      for (i = 0, ii = times.length; i < ii; ++i) {
-        var name = times[i]['name'];
-        if (name.length > longest) {
-          longest = name.length;
-        }
-      }
-      for (i = 0, ii = times.length; i < ii; ++i) {
-        var span = times[i];
-        var duration = span.end - span.start;
-        out += rpad(span['name'], ' ', longest) + ' ' + duration + 'ms\n';
-      }
-      return out;
-    },
-  };
-  return StatTimer;
-})();
 
 var createBlob = function createBlob(data, contentType) {
   if (typeof Blob !== 'undefined') {
@@ -1227,6 +1160,8 @@ function wrapReason(reason) {
     return reason;
   }
   switch (reason.name) {
+    case 'AbortException':
+      return new AbortException(reason.message);
     case 'MissingPDFException':
       return new MissingPDFException(reason.message);
     case 'UnexpectedResponseException':
@@ -1234,6 +1169,17 @@ function wrapReason(reason) {
     default:
       return new UnknownErrorException(reason.message, reason.details);
   }
+}
+
+function makeReasonSerializable(reason) {
+  if (!(reason instanceof Error) ||
+      reason instanceof AbortException ||
+      reason instanceof MissingPDFException ||
+      reason instanceof UnexpectedResponseException ||
+      reason instanceof UnknownErrorException) {
+    return reason;
+  }
+  return new UnknownErrorException(reason.message, reason.toString());
 }
 
 function resolveOrReject(capability, success, reason) {
@@ -1273,7 +1219,7 @@ function MessageHandler(sourceName, targetName, comObj) {
         let callback = callbacksCapabilities[callbackId];
         delete callbacksCapabilities[callbackId];
         if ('error' in data) {
-          callback.reject(data.error);
+          callback.reject(wrapReason(data.error));
         } else {
           callback.resolve(data.data);
         }
@@ -1296,16 +1242,12 @@ function MessageHandler(sourceName, targetName, comObj) {
             data: result,
           });
         }, (reason) => {
-          if (reason instanceof Error) {
-            // Serialize error to avoid "DataCloneError"
-            reason = reason + '';
-          }
           comObj.postMessage({
             sourceName,
             targetName,
             isReply: true,
             callbackId: data.callbackId,
-            error: reason,
+            error: makeReasonSerializable(reason),
           });
         });
       } else if (data.streamId) {
@@ -1472,6 +1414,7 @@ MessageHandler.prototype = {
         if (this.isCancelled) {
           return;
         }
+        this.isCancelled = true;
         sendStreamRequest({ stream: 'close', });
         delete self.streamSinks[streamId];
       },
@@ -1651,6 +1594,7 @@ export {
   FontType,
   ImageKind,
   CMapCompressionType,
+  AbortException,
   InvalidPDFException,
   MessageHandler,
   MissingDataException,
@@ -1660,7 +1604,6 @@ export {
   PageViewport,
   PasswordException,
   PasswordResponses,
-  StatTimer,
   StreamType,
   TextRenderingMode,
   UnexpectedResponseException,
@@ -1678,17 +1621,13 @@ export {
   deprecated,
   getLookupTableFactory,
   getVerbosityLevel,
-  globalScope,
   info,
-  isArray,
   isArrayBuffer,
   isBool,
   isEmptyObj,
-  isInt,
   isNum,
   isString,
   isSpace,
-  isNodeJS,
   isSameOrigin,
   createValidAbsoluteUrl,
   isLittleEndian,

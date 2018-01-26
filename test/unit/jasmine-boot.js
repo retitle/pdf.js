@@ -43,23 +43,30 @@
 function initializePDFJS(callback) {
   Promise.all([
     'pdfjs/display/global',
+    'pdfjs/display/api',
+    'pdfjs/display/network',
+    'pdfjs/display/fetch_stream',
     'pdfjs-test/unit/annotation_spec',
     'pdfjs-test/unit/api_spec',
     'pdfjs-test/unit/bidi_spec',
     'pdfjs-test/unit/cff_parser_spec',
     'pdfjs-test/unit/cmap_spec',
+    'pdfjs-test/unit/colorspace_spec',
     'pdfjs-test/unit/crypto_spec',
     'pdfjs-test/unit/custom_spec',
     'pdfjs-test/unit/display_svg_spec',
     'pdfjs-test/unit/document_spec',
     'pdfjs-test/unit/dom_utils_spec',
+    'pdfjs-test/unit/encodings_spec',
     'pdfjs-test/unit/evaluator_spec',
     'pdfjs-test/unit/fonts_spec',
     'pdfjs-test/unit/function_spec',
     'pdfjs-test/unit/metadata_spec',
     'pdfjs-test/unit/murmurhash3_spec',
     'pdfjs-test/unit/network_spec',
+    'pdfjs-test/unit/network_utils_spec',
     'pdfjs-test/unit/parser_spec',
+    'pdfjs-test/unit/pdf_history_spec',
     'pdfjs-test/unit/primitives_spec',
     'pdfjs-test/unit/stream_spec',
     'pdfjs-test/unit/type1_parser_spec',
@@ -71,11 +78,24 @@ function initializePDFJS(callback) {
     return SystemJS.import(moduleName);
   })).then(function (modules) {
     var displayGlobal = modules[0];
+    var displayApi = modules[1];
+    var PDFNetworkStream = modules[2].PDFNetworkStream;
+    var PDFFetchStream = modules[3].PDFFetchStream;
+
+    // Set network stream class for unit tests.
+    if (typeof Response !== 'undefined' && 'body' in Response.prototype &&
+        typeof ReadableStream !== 'undefined') {
+      displayApi.setPDFNetworkStreamFactory(function(params) {
+        return new PDFFetchStream(params);
+      });
+    } else {
+      displayApi.setPDFNetworkStreamFactory(function(params) {
+        return new PDFNetworkStream(params);
+      });
+    }
 
     // Configure the worker.
     displayGlobal.PDFJS.workerSrc = '../../build/generic/build/pdf.worker.js';
-    // Opt-in to using the latest API.
-    displayGlobal.PDFJS.pdfjsNext = true;
 
     callback();
   });

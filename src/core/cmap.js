@@ -14,8 +14,8 @@
  */
 
 import {
-  CMapCompressionType, FormatError, isInt, isString, MissingDataException, Util,
-  warn
+  CMapCompressionType, FormatError, isString, MissingDataException,
+  unreachable, Util, warn
 } from '../shared/util';
 import { isCmd, isEOF, isName, isStream } from './primitives';
 import { Lexer } from './parser';
@@ -354,27 +354,27 @@ var IdentityCMap = (function IdentityCMapClosure() {
     addCodespaceRange: CMap.prototype.addCodespaceRange,
 
     mapCidRange(low, high, dstLow) {
-      throw new Error('should not call mapCidRange');
+      unreachable('should not call mapCidRange');
     },
 
     mapBfRange(low, high, dstLow) {
-      throw new Error('should not call mapBfRange');
+      unreachable('should not call mapBfRange');
     },
 
     mapBfRangeToArray(low, high, array) {
-      throw new Error('should not call mapBfRangeToArray');
+      unreachable('should not call mapBfRangeToArray');
     },
 
     mapOne(src, dst) {
-      throw new Error('should not call mapCidOne');
+      unreachable('should not call mapCidOne');
     },
 
     lookup(code) {
-      return (isInt(code) && code <= 0xffff) ? code : undefined;
+      return (Number.isInteger(code) && code <= 0xffff) ? code : undefined;
     },
 
     contains(code) {
-      return isInt(code) && code <= 0xffff;
+      return Number.isInteger(code) && code <= 0xffff;
     },
 
     forEach(callback) {
@@ -384,7 +384,7 @@ var IdentityCMap = (function IdentityCMapClosure() {
     },
 
     charCodeOf(value) {
-      return (isInt(value) && value <= 0xffff) ? value : -1;
+      return (Number.isInteger(value) && value <= 0xffff) ? value : -1;
     },
 
     getMap() {
@@ -403,7 +403,7 @@ var IdentityCMap = (function IdentityCMapClosure() {
     },
 
     get isIdentityCMap() {
-      throw new Error('should not access .isIdentityCMap');
+      unreachable('should not access .isIdentityCMap');
     },
   };
 
@@ -589,7 +589,7 @@ var BinaryCMapReader = (function BinaryCMapReaderClosure() {
             stream.readHex(start, dataSize);
             stream.readHexNumber(end, dataSize);
             addHex(end, start, dataSize);
-            code = stream.readNumber();
+            stream.readNumber(); // code
             // undefined range, skipping
             for (i = 1; i < subitemsCount; i++) {
               incHex(end, dataSize);
@@ -597,7 +597,7 @@ var BinaryCMapReader = (function BinaryCMapReaderClosure() {
               addHex(start, end, dataSize);
               stream.readHexNumber(end, dataSize);
               addHex(end, start, dataSize);
-              code = stream.readNumber();
+              stream.readNumber(); // code
               // nop
             }
             break;
@@ -718,7 +718,7 @@ var CMapFactory = (function CMapFactoryClosure() {
   }
 
   function expectInt(obj) {
-    if (!isInt(obj)) {
+    if (!Number.isInteger(obj)) {
       throw new FormatError('Malformed CMap: expected int.');
     }
   }
@@ -757,8 +757,8 @@ var CMapFactory = (function CMapFactoryClosure() {
       expectString(obj);
       var high = strToInt(obj);
       obj = lexer.getObj();
-      if (isInt(obj) || isString(obj)) {
-        var dstLow = isInt(obj) ? String.fromCharCode(obj) : obj;
+      if (Number.isInteger(obj) || isString(obj)) {
+        var dstLow = Number.isInteger(obj) ? String.fromCharCode(obj) : obj;
         cMap.mapBfRange(low, high, dstLow);
       } else if (isCmd(obj, '[')) {
         obj = lexer.getObj();
@@ -839,7 +839,7 @@ var CMapFactory = (function CMapFactoryClosure() {
 
   function parseWMode(cMap, lexer) {
     var obj = lexer.getObj();
-    if (isInt(obj)) {
+    if (Number.isInteger(obj)) {
       cMap.vertical = !!obj;
     }
   }

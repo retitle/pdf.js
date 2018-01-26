@@ -15,11 +15,12 @@
 
 import {
   arrayByteLength, arraysToBytes, assert, createPromiseCapability, info,
-  InvalidPDFException, isNodeJS, MessageHandler, MissingPDFException,
-  PasswordException, setVerbosityLevel, UnexpectedResponseException,
-  UnknownErrorException, UNSUPPORTED_FEATURES, warn, XRefParseException
+  InvalidPDFException, MessageHandler, MissingPDFException, PasswordException,
+  setVerbosityLevel, UnexpectedResponseException, UnknownErrorException,
+  UNSUPPORTED_FEATURES, warn, XRefParseException
 } from '../shared/util';
 import { LocalPdfManager, NetworkPdfManager } from './pdf_manager';
+import isNodeJS from '../shared/is_node';
 import { Ref } from './primitives';
 
 var WorkerTask = (function WorkerTaskClosure() {
@@ -99,6 +100,16 @@ IPDFStreamReader.prototype = {
    * @returns {Promise}
    */
   get headersReady() {
+    return null;
+  },
+
+  /**
+   * Gets the Content-Disposition filename. It is defined after the headersReady
+   * promise is resolved.
+   * @returns {string|null} The filename, or `null` if the Content-Disposition
+   *                        header is missing/invalid.
+   */
+  get filename() {
     return null;
   },
 
@@ -364,6 +375,15 @@ var WorkerMessageHandler = {
     var cancelXHRs = null;
     var WorkerTasks = [];
 
+    let apiVersion = docParams.apiVersion;
+    let workerVersion =
+      typeof PDFJSDev !== 'undefined' ? PDFJSDev.eval('BUNDLE_VERSION') : null;
+    // The `apiVersion !== null` check is needed to avoid errors during testing.
+    if (apiVersion !== null && apiVersion !== workerVersion) {
+      throw new Error(`The API version "${apiVersion}" does not match ` +
+                      `the Worker version "${workerVersion}".`);
+    }
+
     var docId = docParams.docId;
     var docBaseUrl = docParams.docBaseUrl;
     var workerHandlerName = docParams.docId + '_worker';
@@ -393,19 +413,15 @@ var WorkerMessageHandler = {
       var loadDocumentCapability = createPromiseCapability();
 
       var parseSuccess = function parseSuccess() {
-        var numPagesPromise = pdfManager.ensureDoc('numPages');
-        var fingerprintPromise = pdfManager.ensureDoc('fingerprint');
-        var encryptedPromise = pdfManager.ensureXRef('encrypt');
-        Promise.all([numPagesPromise, fingerprintPromise,
-                     encryptedPromise]).then(function onDocReady(results) {
-          var doc = {
-            numPages: results[0],
-            fingerprint: results[1],
-            encrypted: !!results[2],
-          };
-          loadDocumentCapability.resolve(doc);
-        },
-        parseFailure);
+        Promise.all([
+          pdfManager.ensureDoc('numPages'),
+          pdfManager.ensureDoc('fingerprint'),
+        ]).then(function([numPages, fingerprint]) {
+          loadDocumentCapability.resolve({
+            numPages,
+            fingerprint,
+          });
+        }, parseFailure);
       };
 
       var parseFailure = function parseFailure(e) {
@@ -602,6 +618,7 @@ var WorkerMessageHandler = {
         disableFontFace: data.disableFontFace,
         nativeImageDecoderSupport: data.nativeImageDecoderSupport,
         ignoreErrors: data.ignoreErrors,
+        isEvalSupported: data.isEvalSupported,
       };
 
       getPdfManager(data, evaluatorOptions).then(function (newPdfManager) {

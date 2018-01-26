@@ -14,7 +14,7 @@
  */
 
 import {
-  getVisibleElements, NullL10n, scrollIntoView, watchScroll
+  getVisibleElements, isValidRotation, NullL10n, scrollIntoView, watchScroll
 } from './ui_utils';
 import { PDFThumbnailView } from './pdf_thumbnail_view';
 
@@ -84,7 +84,20 @@ class PDFThumbnailViewer {
       let first = visibleThumbs.first.id;
       // Account for only one thumbnail being visible.
       let last = (numVisibleThumbs > 1 ? visibleThumbs.last.id : first);
+
+      let shouldScroll = false;
       if (page <= first || page >= last) {
+        shouldScroll = true;
+      } else {
+        visibleThumbs.views.some(function(view) {
+          if (view.id !== page) {
+            return false;
+          }
+          shouldScroll = view.percent < 100;
+          return true;
+        });
+      }
+      if (shouldScroll) {
         scrollIntoView(thumbnail, { top: THUMBNAIL_SCROLL_MARGIN, });
       }
     }
@@ -95,11 +108,14 @@ class PDFThumbnailViewer {
   }
 
   set pagesRotation(rotation) {
-    if (!(typeof rotation === 'number' && rotation % 90 === 0)) {
+    if (!isValidRotation(rotation)) {
       throw new Error('Invalid thumbnails rotation angle.');
     }
     if (!this.pdfDocument) {
       return;
+    }
+    if (this._pagesRotation === rotation) {
+      return; // The rotation didn't change.
     }
     this._pagesRotation = rotation;
 
@@ -133,10 +149,10 @@ class PDFThumbnailViewer {
 
     this.pdfDocument = pdfDocument;
     if (!pdfDocument) {
-      return Promise.resolve();
+      return;
     }
 
-    return pdfDocument.getPage(1).then((firstPage) => {
+    pdfDocument.getPage(1).then((firstPage) => {
       let pagesCount = pdfDocument.numPages;
       let viewport = firstPage.getViewport(1.0);
       for (let pageNum = 1; pageNum <= pagesCount; ++pageNum) {
@@ -151,6 +167,8 @@ class PDFThumbnailViewer {
         });
         this._thumbnails.push(thumbnail);
       }
+    }).catch((reason) => {
+      console.error('Unable to initialize thumbnail viewer', reason);
     });
   }
 
@@ -205,6 +223,10 @@ class PDFThumbnailViewer {
       thumbView.setPdfPage(pdfPage);
       this._pagesRequests[pageNumber] = null;
       return pdfPage;
+    }).catch((reason) => {
+      console.error('Unable to get page for thumb view', reason);
+      // Page error -- there is nothing can be done.
+      this._pagesRequests[pageNumber] = null;
     });
     this._pagesRequests[pageNumber] = promise;
     return promise;

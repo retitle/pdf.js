@@ -30,8 +30,39 @@ var pdfjsDisplayDOMUtils = require('./display/dom_utils.js');
 var pdfjsDisplaySVG = require('./display/svg.js');
 
 if (typeof PDFJSDev === 'undefined' ||
-    !PDFJSDev.test('FIREFOX || MOZCENTRAL')) {
-  require('./display/network.js');
+    !PDFJSDev.test('FIREFOX || MOZCENTRAL || CHROME')) {
+  const isNodeJS = require('./shared/is_node.js');
+  if (isNodeJS()) {
+    let PDFNodeStream = require('./display/node_stream.js').PDFNodeStream;
+    pdfjsDisplayAPI.setPDFNetworkStreamFactory((params) => {
+      return new PDFNodeStream(params);
+    });
+  } else if (typeof Response !== 'undefined' && 'body' in Response.prototype &&
+             typeof ReadableStream !== 'undefined') {
+    let PDFFetchStream = require('./display/fetch_stream.js').PDFFetchStream;
+    pdfjsDisplayAPI.setPDFNetworkStreamFactory((params) => {
+      return new PDFFetchStream(params);
+    });
+   } else {
+    let PDFNetworkStream = require('./display/network.js').PDFNetworkStream;
+    pdfjsDisplayAPI.setPDFNetworkStreamFactory((params) => {
+      return new PDFNetworkStream(params);
+    });
+  }
+} else if (typeof PDFJSDev !== 'undefined' && PDFJSDev.test('CHROME')) {
+  let PDFNetworkStream = require('./display/network.js').PDFNetworkStream;
+  let PDFFetchStream;
+  if (typeof Response !== 'undefined' && 'body' in Response.prototype &&
+      typeof ReadableStream !== 'undefined') {
+    PDFFetchStream = require('./display/fetch_stream.js').PDFFetchStream;
+  }
+  pdfjsDisplayAPI.setPDFNetworkStreamFactory((params) => {
+    if (PDFFetchStream && /^https?:/i.test(params.url)) {
+      // "fetch" is only supported for http(s), not file/ftp.
+      return new PDFFetchStream(params);
+    }
+    return new PDFNetworkStream(params);
+  });
 }
 
 exports.PDFJS = pdfjsDisplayGlobal.PDFJS;
@@ -43,7 +74,6 @@ exports.PDFDataRangeTransport = pdfjsDisplayAPI.PDFDataRangeTransport;
 exports.PDFWorker = pdfjsDisplayAPI.PDFWorker;
 exports.renderTextLayer = pdfjsDisplayTextLayer.renderTextLayer;
 exports.AnnotationLayer = pdfjsDisplayAnnotationLayer.AnnotationLayer;
-exports.CustomStyle = pdfjsDisplayDOMUtils.CustomStyle;
 exports.createPromiseCapability = pdfjsSharedUtil.createPromiseCapability;
 exports.PasswordResponses = pdfjsSharedUtil.PasswordResponses;
 exports.InvalidPDFException = pdfjsSharedUtil.InvalidPDFException;
@@ -54,7 +84,6 @@ exports.UnexpectedResponseException =
   pdfjsSharedUtil.UnexpectedResponseException;
 exports.OPS = pdfjsSharedUtil.OPS;
 exports.UNSUPPORTED_FEATURES = pdfjsSharedUtil.UNSUPPORTED_FEATURES;
-exports.isValidUrl = pdfjsDisplayDOMUtils.isValidUrl;
 exports.createValidAbsoluteUrl = pdfjsSharedUtil.createValidAbsoluteUrl;
 exports.createObjectURL = pdfjsSharedUtil.createObjectURL;
 exports.removeNullCharacters = pdfjsSharedUtil.removeNullCharacters;
@@ -64,4 +93,3 @@ exports.RenderingCancelledException =
   pdfjsDisplayDOMUtils.RenderingCancelledException;
 exports.getFilenameFromUrl = pdfjsDisplayDOMUtils.getFilenameFromUrl;
 exports.addLinkAttributes = pdfjsDisplayDOMUtils.addLinkAttributes;
-exports.StatTimer = pdfjsSharedUtil.StatTimer;

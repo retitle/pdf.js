@@ -14,11 +14,13 @@
  */
 
 import {
-  CMapCompressionType, createValidAbsoluteUrl, deprecated, globalScope,
-  removeNullCharacters, stringToBytes, warn
+  assert, CMapCompressionType, removeNullCharacters, stringToBytes,
+  unreachable, warn
 } from '../shared/util';
+import globalScope from '../shared/global_scope';
 
-var DEFAULT_LINK_REL = 'noopener noreferrer nofollow';
+const DEFAULT_LINK_REL = 'noopener noreferrer nofollow';
+const SVG_NS = 'http://www.w3.org/2000/svg';
 
 class DOMCanvasFactory {
   create(width, height) {
@@ -66,6 +68,10 @@ class DOMCMapReaderFactory {
   }
 
   fetch({ name, }) {
+    if (!this.baseUrl) {
+      return Promise.reject(new Error('CMap baseUrl must be specified, ' +
+        'see "PDFJS.cMapUrl" (and also "PDFJS.cMapPacked").'));
+    }
     if (!name) {
       return Promise.reject(new Error('CMap name must be specified.'));
     }
@@ -108,59 +114,152 @@ class DOMCMapReaderFactory {
   }
 }
 
-/**
- * Optimised CSS custom property getter/setter.
- * @class
- */
-var CustomStyle = (function CustomStyleClosure() {
+class DOMSVGFactory {
+  create(width, height) {
+    assert(width > 0 && height > 0, 'Invalid SVG dimensions');
 
-  // As noted on: http://www.zachstronaut.com/posts/2009/02/17/
-  //              animate-css-transforms-firefox-webkit.html
-  // in some versions of IE9 it is critical that ms appear in this list
-  // before Moz
-  var prefixes = ['ms', 'Moz', 'Webkit', 'O'];
-  var _cache = Object.create(null);
+    let svg = document.createElementNS(SVG_NS, 'svg:svg');
+    svg.setAttribute('version', '1.1');
+    svg.setAttribute('width', width + 'px');
+    svg.setAttribute('height', height + 'px');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
 
-  function CustomStyle() {}
+    return svg;
+  }
 
-  CustomStyle.getProp = function get(propName, element) {
-    // check cache only when no element is given
-    if (arguments.length === 1 && typeof _cache[propName] === 'string') {
-      return _cache[propName];
+  createElement(type) {
+    assert(typeof type === 'string', 'Invalid SVG element type');
+
+    return document.createElementNS(SVG_NS, type);
+  }
+}
+
+class SimpleDOMNode {
+  constructor(nodeName, nodeValue) {
+    this.nodeName = nodeName;
+    this.nodeValue = nodeValue;
+
+    Object.defineProperty(this, 'parentNode', { value: null, writable: true, });
+  }
+
+  get firstChild() {
+    return this.childNodes[0];
+  }
+
+  get nextSibling() {
+    let index = this.parentNode.childNodes.indexOf(this);
+    return this.parentNode.childNodes[index + 1];
+  }
+
+  get textContent() {
+    if (!this.childNodes) {
+      return this.nodeValue || '';
     }
+    return this.childNodes.map(function(child) {
+      return child.textContent;
+    }).join('');
+  }
 
-    element = element || document.documentElement;
-    var style = element.style, prefixed, uPropName;
+  hasChildNodes() {
+    return this.childNodes && this.childNodes.length > 0;
+  }
+}
 
-    // test standard property first
-    if (typeof style[propName] === 'string') {
-      return (_cache[propName] = propName);
-    }
+class SimpleXMLParser {
+  parseFromString(data) {
+    let nodes = [];
 
-    // capitalize
-    uPropName = propName.charAt(0).toUpperCase() + propName.slice(1);
+    // Remove all comments and processing instructions.
+    data = data.replace(/<\?[\s\S]*?\?>|<!--[\s\S]*?-->/g, '').trim();
+    data = data.replace(/<!DOCTYPE[^>\[]+(\[[^\]]+)?[^>]+>/g, '').trim();
 
-    // test vendor specific properties
-    for (var i = 0, l = prefixes.length; i < l; i++) {
-      prefixed = prefixes[i] + uPropName;
-      if (typeof style[prefixed] === 'string') {
-        return (_cache[propName] = prefixed);
+    // Extract all text nodes and replace them with a numeric index in
+    // the nodes.
+    data = data.replace(/>([^<][\s\S]*?)</g, (all, text) => {
+      let length = nodes.length;
+      let node = new SimpleDOMNode('#text', this._decodeXML(text));
+      nodes.push(node);
+      if (node.textContent.trim().length === 0) {
+        return '><'; // Ignore whitespace.
       }
+      return '>' + length + ',<';
+    });
+
+    // Extract all CDATA nodes.
+    data = data.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,
+        function(all, text) {
+      let length = nodes.length;
+      let node = new SimpleDOMNode('#text', text);
+      nodes.push(node);
+      return length + ',';
+    });
+
+    // Until nodes without '<' and '>' content are present, replace them
+    // with a numeric index in the nodes.
+    let regex =
+      /<([\w\:]+)((?:[\s\w:=]|'[^']*'|"[^"]*")*)(?:\/>|>([\d,]*)<\/[^>]+>)/g;
+    let lastLength;
+    do {
+      lastLength = nodes.length;
+      data = data.replace(regex, function(all, name, attrs, data) {
+        let length = nodes.length;
+        let node = new SimpleDOMNode(name);
+        let children = [];
+        if (data) {
+          data = data.split(',');
+          data.pop();
+          data.forEach(function(child) {
+            let childNode = nodes[+child];
+            childNode.parentNode = node;
+            children.push(childNode);
+          });
+        }
+
+        node.childNodes = children;
+        nodes.push(node);
+        return length + ',';
+      });
+    } while (lastLength < nodes.length);
+
+    // We should only have one root index left, which will be last in the nodes.
+    return {
+      documentElement: nodes.pop(),
+    };
+  }
+
+  _decodeXML(text) {
+    if (text.indexOf('&') < 0) {
+      return text;
     }
 
-    // If all fails then set to undefined.
-    return (_cache[propName] = 'undefined');
-  };
+    return text.replace(/&(#(x[0-9a-f]+|\d+)|\w+);/gi,
+        function(all, entityName, number) {
+      if (number) {
+        if (number[0] === 'x') {
+          number = parseInt(number.substring(1), 16);
+        } else {
+          number = +number;
+        }
+        return String.fromCharCode(number);
+      }
 
-  CustomStyle.setProp = function set(propName, element, str) {
-    var prop = this.getProp(propName);
-    if (prop !== 'undefined') {
-      element.style[prop] = str;
-    }
-  };
-
-  return CustomStyle;
-})();
+      switch (entityName) {
+        case 'amp':
+          return '&';
+        case 'lt':
+          return '<';
+        case 'gt':
+          return '>';
+        case 'quot':
+          return '\"';
+        case 'apos':
+          return '\'';
+      }
+      return '&' + entityName + ';';
+    });
+  }
+}
 
 var RenderingCancelledException = (function RenderingCancelledException() {
   function RenderingCancelledException(msg, type) {
@@ -291,8 +390,6 @@ function getDefaultSetting(id) {
       return globalSettings ? globalSettings.externalLinkRel : DEFAULT_LINK_REL;
     case 'enableStats':
       return !!(globalSettings && globalSettings.enableStats);
-    case 'pdfjsNext':
-      return !!(globalSettings && globalSettings.pdfjsNext);
     default:
       throw new Error('Unknown default setting: ' + id);
   }
@@ -311,22 +408,92 @@ function isExternalLinkTargetSet() {
   }
 }
 
-function isValidUrl(url, allowRelative) {
-  deprecated('isValidUrl(), please use createValidAbsoluteUrl() instead.');
-  var baseUrl = allowRelative ? 'http://example.com' : null;
-  return createValidAbsoluteUrl(url, baseUrl) !== null;
+class StatTimer {
+  constructor(enable = true) {
+    this.enabled = !!enable;
+    this.started = Object.create(null);
+    this.times = [];
+  }
+
+  time(name) {
+    if (!this.enabled) {
+      return;
+    }
+    if (name in this.started) {
+      warn('Timer is already running for ' + name);
+    }
+    this.started[name] = Date.now();
+  }
+
+  timeEnd(name) {
+    if (!this.enabled) {
+      return;
+    }
+    if (!(name in this.started)) {
+      warn('Timer has not been started for ' + name);
+    }
+    this.times.push({
+      'name': name,
+      'start': this.started[name],
+      'end': Date.now(),
+    });
+    // Remove timer from started so it can be called again.
+    delete this.started[name];
+  }
+
+  toString() {
+    let times = this.times;
+    // Find the longest name for padding purposes.
+    let out = '', longest = 0;
+    for (let i = 0, ii = times.length; i < ii; ++i) {
+      let name = times[i]['name'];
+      if (name.length > longest) {
+        longest = name.length;
+      }
+    }
+    for (let i = 0, ii = times.length; i < ii; ++i) {
+      let span = times[i];
+      let duration = span.end - span.start;
+      out += `${span['name'].padEnd(longest)} ${duration}ms\n`;
+    }
+    return out;
+  }
+}
+
+/**
+ * Helps avoid having to initialize {StatTimer} instances, e.g. one for every
+ * page, in cases where the collected stats are not actually being used.
+ * This (dummy) class can thus, since all its methods are `static`, be directly
+ * shared between multiple call-sites without the need to be initialized first.
+ *
+ * NOTE: This must implement the same interface as {StatTimer}.
+ */
+class DummyStatTimer {
+  constructor() {
+    unreachable('Cannot initialize DummyStatTimer.');
+  }
+
+  static time(name) {}
+
+  static timeEnd(name) {}
+
+  static toString() {
+    return '';
+  }
 }
 
 export {
-  CustomStyle,
   RenderingCancelledException,
   addLinkAttributes,
   isExternalLinkTargetSet,
-  isValidUrl,
   getFilenameFromUrl,
   LinkTarget,
   getDefaultSetting,
   DEFAULT_LINK_REL,
   DOMCanvasFactory,
   DOMCMapReaderFactory,
+  DOMSVGFactory,
+  SimpleXMLParser,
+  StatTimer,
+  DummyStatTimer,
 };

@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-import { createPromiseCapability, Util } from '../shared/util';
-import { CustomStyle, getDefaultSetting } from './dom_utils';
+import { AbortException, createPromiseCapability, Util } from '../shared/util';
+import { getDefaultSetting } from './dom_utils';
 
 /**
  * Text layer render parameters.
@@ -498,7 +498,7 @@ var renderTextLayer = (function renderTextLayerClosure() {
 
     cancel: function TextLayer_cancel() {
       if (this._reader) {
-        this._reader.cancel();
+        this._reader.cancel(new AbortException('text layer task cancelled'));
         this._reader = null;
       }
       this._canceled = true;
@@ -547,7 +547,7 @@ var renderTextLayer = (function renderTextLayerClosure() {
       }
       if (transform !== '') {
         textDivProperties.originalTransform = transform;
-        CustomStyle.setProp('transform', textDiv, transform);
+        textDiv.style.transform = transform;
       }
       this._textDivProperties.set(textDiv, textDivProperties);
       textLayerFrag.appendChild(textDiv);
@@ -653,12 +653,11 @@ var renderTextLayer = (function renderTextLayerClosure() {
             div.setAttribute('style', divProperties.style + padding);
           }
           if (transform !== '') {
-            CustomStyle.setProp('transform', div, transform);
+            div.style.transform = transform;
           }
         } else {
           div.style.padding = 0;
-          CustomStyle.setProp('transform', div,
-                              divProperties.originalTransform || '');
+          div.style.transform = divProperties.originalTransform || '';
         }
       }
     },

@@ -17,9 +17,8 @@ import {
   buildGetDocumentParams, NodeFileReaderFactory, TEST_PDFS_PATH
 } from './test_utils';
 import {
-  createPromiseCapability, FontType, InvalidPDFException, isNodeJS,
-  MissingPDFException, PasswordException, PasswordResponses, StreamType,
-  stringToBytes
+  createPromiseCapability, FontType, InvalidPDFException, MissingPDFException,
+  PasswordException, PasswordResponses, StreamType, stringToBytes
 } from '../../src/shared/util';
 import {
   DOMCanvasFactory, RenderingCancelledException
@@ -27,6 +26,7 @@ import {
 import {
   getDocument, PDFDocumentProxy, PDFPageProxy
 } from '../../src/display/api';
+import isNodeJS from '../../src/shared/is_node';
 import { PDFJS } from '../../src/display/global';
 
 describe('api', function() {
@@ -38,7 +38,6 @@ describe('api', function() {
 
   beforeAll(function(done) {
     if (isNodeJS()) {
-      PDFJS.pdfjsNext = true;
       // NOTE: To support running the canvas-related tests in Node.js,
       // a `NodeCanvasFactory` would need to be added (in test_utils.js).
     } else {
@@ -684,7 +683,7 @@ describe('api', function() {
     it('gets javascript', function(done) {
       var promise = doc.getJavaScript();
       promise.then(function (data) {
-        expect(data).toEqual([]);
+        expect(data).toEqual(null);
         done();
       }).catch(function (reason) {
         done.fail(reason);
@@ -790,14 +789,12 @@ describe('api', function() {
       });
     });
     it('gets metadata', function(done) {
-      if (isNodeJS()) {
-        pending('Document is not supported in Node.js.');
-      }
       var promise = doc.getMetadata();
       promise.then(function(metadata) {
         expect(metadata.info['Title']).toEqual('Basic API Test');
         expect(metadata.info['PDFFormatVersion']).toEqual('1.7');
         expect(metadata.metadata.get('dc:title')).toEqual('Basic API Test');
+        expect(metadata.contentDispositionFilename).toEqual(null);
         done();
       }).catch(function (reason) {
         done.fail(reason);
@@ -858,6 +855,85 @@ describe('api', function() {
         done.fail(reason);
       });
     });
+
+    describe('Cross-origin', function() {
+      var loadingTask;
+      function _checkCanLoad(expectSuccess, filename, options) {
+        if (isNodeJS()) {
+          pending('Cannot simulate cross-origin requests in Node.js');
+        }
+        var params = buildGetDocumentParams(filename, options);
+        var url = new URL(params.url);
+        if (url.hostname === 'localhost') {
+          url.hostname = '127.0.0.1';
+        } else if (params.url.hostname === '127.0.0.1') {
+          url.hostname = 'localhost';
+        } else {
+          pending('Can only run cross-origin test on localhost!');
+        }
+        params.url = url.href;
+        loadingTask = getDocument(params);
+        return loadingTask.promise.then(function(pdf) {
+          return pdf.destroy();
+        }).then(function() {
+          expect(expectSuccess).toEqual(true);
+        }, function(error) {
+          if (expectSuccess) {
+            // For ease of debugging.
+            expect(error).toEqual('There should not be any error');
+          }
+          expect(expectSuccess).toEqual(false);
+        });
+      }
+      function testCanLoad(filename, options) {
+        return _checkCanLoad(true, filename, options);
+      }
+      function testCannotLoad(filename, options) {
+        return _checkCanLoad(false, filename, options);
+      }
+      afterEach(function(done) {
+        if (loadingTask) {
+          loadingTask.destroy().then(done);
+        } else {
+          done();
+        }
+      });
+      it('server disallows cors', function(done) {
+        testCannotLoad('basicapi.pdf').then(done);
+      });
+      it('server allows cors without credentials, default withCredentials',
+          function(done) {
+        testCanLoad('basicapi.pdf?cors=withoutCredentials').then(done);
+      });
+      it('server allows cors without credentials, and withCredentials=false',
+          function(done) {
+        testCanLoad('basicapi.pdf?cors=withoutCredentials', {
+          withCredentials: false,
+        }).then(done);
+      });
+      it('server allows cors without credentials, but withCredentials=true',
+          function(done) {
+        testCannotLoad('basicapi.pdf?cors=withoutCredentials', {
+          withCredentials: true,
+        }).then(done);
+      });
+      it('server allows cors with credentials, and withCredentials=true',
+          function(done) {
+        testCanLoad('basicapi.pdf?cors=withCredentials', {
+          withCredentials: true,
+        }).then(done);
+      });
+      it('server allows cors with credentials, and withCredentials=false',
+          function(done) {
+        // The server supports even more than we need, so if the previous tests
+        // pass, then this should pass for sure.
+        // The only case where this test fails is when the server does not reply
+        // with the Access-Control-Allow-Origin header.
+        testCanLoad('basicapi.pdf?cors=withCredentials', {
+          withCredentials: false,
+        }).then(done);
+      });
+    });
   });
   describe('Page', function() {
     var loadingTask;
@@ -903,6 +979,18 @@ describe('api', function() {
       expect(viewport.transform).toEqual([0, 1.5, 1.5, 0, 0, 0]);
       expect(viewport.width).toEqual(1262.835);
       expect(viewport.height).toEqual(892.92);
+    });
+    it('gets viewport respecting "dontFlip" argument', function () {
+      const scale = 1;
+      const rotation = 135;
+      let viewport = page.getViewport(scale, rotation);
+      let dontFlipViewport = page.getViewport(scale, rotation, true);
+
+      expect(dontFlipViewport).not.toEqual(viewport);
+      expect(dontFlipViewport).toEqual(viewport.clone({ dontFlip: true, }));
+
+      expect(viewport.transform).toEqual([1, 0, 0, -1, 0, 841.89]);
+      expect(dontFlipViewport.transform).toEqual([1, 0, -0, 1, 0, 0]);
     });
     it('gets annotations', function (done) {
       var defaultPromise = page.getAnnotations().then(function (data) {

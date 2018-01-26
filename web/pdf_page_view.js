@@ -18,8 +18,7 @@ import {
   RendererType, roundToDivide
 } from './ui_utils';
 import {
-  createPromiseCapability, CustomStyle, PDFJS, RenderingCancelledException,
-  SVGGraphics
+  createPromiseCapability, PDFJS, RenderingCancelledException, SVGGraphics
 } from 'pdfjs-lib';
 import { getGlobalEventBus } from './dom_events';
 import { RenderingStates } from './pdf_rendering_queue';
@@ -56,6 +55,7 @@ class PDFPageView {
     this.id = options.id;
     this.renderingId = 'page' + this.id;
 
+    this.pdfPage = null;
     this.pageLabel = null;
     this.rotation = 0;
     this.scale = options.scale || DEFAULT_SCALE;
@@ -135,7 +135,7 @@ class PDFPageView {
   }
 
   reset(keepZoomLayer = false, keepAnnotations = false) {
-    this.cancelRendering();
+    this.cancelRendering(keepAnnotations);
 
     let div = this.div;
     div.style.width = Math.floor(this.viewport.width) + 'px';
@@ -158,7 +158,8 @@ class PDFPageView {
       // Hide the annotation layer until all elements are resized
       // so they are not displayed on the already resized page.
       this.annotationLayer.hide();
-    } else {
+    } else if (this.annotationLayer) {
+      this.annotationLayer.cancel();
       this.annotationLayer = null;
     }
 
@@ -239,7 +240,7 @@ class PDFPageView {
     this.reset(/* keepZoomLayer = */ true, /* keepAnnotations = */ true);
   }
 
-  cancelRendering() {
+  cancelRendering(keepAnnotations = false) {
     if (this.paintTask) {
       this.paintTask.cancel();
       this.paintTask = null;
@@ -250,6 +251,10 @@ class PDFPageView {
     if (this.textLayer) {
       this.textLayer.cancel();
       this.textLayer = null;
+    }
+    if (!keepAnnotations && this.annotationLayer) {
+      this.annotationLayer.cancel();
+      this.annotationLayer = null;
     }
   }
 
@@ -274,7 +279,7 @@ class PDFPageView {
     }
     let cssTransform = 'rotate(' + relativeRotation + 'deg) ' +
       'scale(' + scaleX + ',' + scaleY + ')';
-    CustomStyle.setProp('transform', target, cssTransform);
+    target.style.transform = cssTransform;
 
     if (this.textLayer) {
       // Rotating the text layer is more complicated since the divs inside the
@@ -311,11 +316,12 @@ class PDFPageView {
           console.error('Bad rotation value.');
           break;
       }
-      CustomStyle.setProp('transform', textLayerDiv,
-          'rotate(' + textAbsRotation + 'deg) ' +
-          'scale(' + scale + ', ' + scale + ') ' +
-          'translate(' + transX + ', ' + transY + ')');
-      CustomStyle.setProp('transformOrigin', textLayerDiv, '0% 0%');
+
+      textLayerDiv.style.transform =
+        'rotate(' + textAbsRotation + 'deg) ' +
+        'scale(' + scale + ', ' + scale + ') ' +
+        'translate(' + transX + ', ' + transY + ')';
+      textLayerDiv.style.transformOrigin = '0% 0%';
     }
 
     if (redrawAnnotations && this.annotationLayer) {
@@ -339,6 +345,11 @@ class PDFPageView {
     if (this.renderingState !== RenderingStates.INITIAL) {
       console.error('Must be in new state before drawing');
       this.reset(); // Ensure that we reset all state to prevent issues.
+    }
+
+    if (!this.pdfPage) {
+      this.renderingState = RenderingStates.FINISHED;
+      return Promise.reject(new Error('Page is not loaded'));
     }
 
     this.renderingState = RenderingStates.RUNNING;
@@ -401,9 +412,7 @@ class PDFPageView {
         this.paintTask = null;
       }
 
-      if (((typeof PDFJSDev === 'undefined' ||
-            !PDFJSDev.test('PDFJS_NEXT')) && error === 'cancelled') ||
-          error instanceof RenderingCancelledException) {
+      if (error instanceof RenderingCancelledException) {
         this.error = null;
         return Promise.resolve(undefined);
       }
@@ -583,13 +592,8 @@ class PDFPageView {
     let cancelled = false;
     let ensureNotCancelled = () => {
       if (cancelled) {
-        if ((typeof PDFJSDev !== 'undefined' &&
-             PDFJSDev.test('PDFJS_NEXT')) || PDFJS.pdfjsNext) {
-          throw new RenderingCancelledException(
-            'Rendering cancelled, page ' + this.id, 'svg');
-        } else {
-          throw 'cancelled'; // eslint-disable-line no-throw-literal
-        }
+        throw new RenderingCancelledException(
+          'Rendering cancelled, page ' + this.id, 'svg');
       }
     };
 

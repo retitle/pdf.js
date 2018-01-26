@@ -30,10 +30,10 @@ const SidebarView = {
  * @property {PDFViewer} pdfViewer - The document viewer.
  * @property {PDFThumbnailViewer} pdfThumbnailViewer - The thumbnail viewer.
  * @property {PDFOutlineViewer} pdfOutlineViewer - The outline viewer.
- * @property {HTMLDivElement} mainContainer - The main container
- *   (in which the viewer element is placed).
  * @property {HTMLDivElement} outerContainer - The outer container
  *   (encasing both the viewer and sidebar elements).
+ * @property {HTMLDivElement} viewerContainer - The viewer container
+ *   (in which the viewer element is placed).
  * @property {EventBus} eventBus - The application event bus.
  * @property {HTMLButtonElement} toggleButton - The button used for
  *   opening/closing the sidebar.
@@ -73,8 +73,8 @@ class PDFSidebar {
     this.pdfThumbnailViewer = options.pdfThumbnailViewer;
     this.pdfOutlineViewer = options.pdfOutlineViewer;
 
-    this.mainContainer = options.mainContainer;
     this.outerContainer = options.outerContainer;
+    this.viewerContainer = options.viewerContainer;
     this.eventBus = options.eventBus;
     this.toggleButton = options.toggleButton;
 
@@ -126,7 +126,7 @@ class PDFSidebar {
    * @param {number} view - The sidebar view that should become visible,
    *                        must be one of the values in {SidebarView}.
    */
-  setInitialView(view) {
+  setInitialView(view = SidebarView.NONE) {
     if (this.isInitialViewSet) {
       return;
     }
@@ -382,8 +382,8 @@ class PDFSidebar {
    * @private
    */
   _addEventListeners() {
-    this.mainContainer.addEventListener('transitionend', (evt) => {
-      if (evt.target === this.mainContainer) {
+    this.viewerContainer.addEventListener('transitionend', (evt) => {
+      if (evt.target === this.viewerContainer) {
         this.outerContainer.classList.remove('sidebarMoving');
       }
     });
@@ -420,17 +420,31 @@ class PDFSidebar {
     });
 
     this.eventBus.on('attachmentsloaded', (evt) => {
-      let attachmentsCount = evt.attachmentsCount;
+      if (evt.attachmentsCount) {
+        this.attachmentsButton.disabled = false;
 
-      this.attachmentsButton.disabled = !attachmentsCount;
-
-      if (attachmentsCount) {
         this._showUINotification(SidebarView.ATTACHMENTS);
-      } else if (this.active === SidebarView.ATTACHMENTS) {
-        // If the attachment view was opened during document load, switch away
-        // from it if it turns out that the document has no attachments.
-        this.switchView(SidebarView.THUMBS);
+        return;
       }
+
+      // Attempt to avoid temporarily disabling, and switching away from, the
+      // attachment view for documents that do not contain proper attachments
+      // but *only* FileAttachment annotations. Hence we defer those operations
+      // slightly to allow time for parsing any FileAttachment annotations that
+      // may be present on the *initially* rendered page of the document.
+      Promise.resolve().then(() => {
+        if (this.attachmentsView.hasChildNodes()) {
+          // FileAttachment annotations were appended to the attachment view.
+          return;
+        }
+        this.attachmentsButton.disabled = true;
+
+        if (this.active === SidebarView.ATTACHMENTS) {
+          // If the attachment view was opened during document load, switch away
+          // from it if it turns out that the document has no attachments.
+          this.switchView(SidebarView.THUMBS);
+        }
+      });
     });
 
     // Update the thumbnailViewer, if visible, when exiting presentation mode.
